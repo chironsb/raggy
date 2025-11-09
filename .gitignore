@@ -37,3 +37,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Local OpenCode tool (contains personal path)
+opencode-integration/tool/rag.ts

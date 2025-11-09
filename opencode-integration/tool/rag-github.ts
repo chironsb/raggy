@@ -28,6 +28,7 @@ async function ensureServerRunning(): Promise<void> {
         serverProcess.unref();
         setTimeout(() => resolve(), 5000);
       } catch (startError) {
+        // Server might already be starting
         resolve();
       }
     });
@@ -86,43 +87,91 @@ export default tool({
     limit: tool.schema.number().optional()
       .describe('Maximum number of results to return (for query, default: 5)')
   },
-  async execute(args: any, context?: any) {
+  async execute(args, context) {
     try {
-      await ensureServerRunning();
+      // Only auto-start server for actions that need it (not for status/stop)
+      if (args.action !== 'status' && args.action !== 'stop') {
+        await ensureServerRunning();
+      }
 
       switch (args.action) {
         case 'start':
           await ensureServerRunning();
-          const status = await makeApiRequest('status');
-          const statusData = status.data || status;
+          const startStatus = await makeApiRequest('status');
+          const startStatusData = startStatus.data || startStatus;
+          const startLlmInfo = startStatusData.llmConfig || {};
+          const startEmbModel = startStatusData.embeddingModel || {};
+          const startCollectionsCount = (startStatusData.collections || []).length;
+          const startCacheCount = startStatusData.cacheStats?.embeddings?.keys || 0;
+          
           return JSON.stringify({
             success: true,
-            message: 'RAG server is running',
-            status: statusData
+            message: [
+              'Status: ✅ Online',
+              `Model: ${startLlmInfo.model || 'llama3.2:1b'} @ ${startLlmInfo.baseUrl || 'localhost:11434'}`,
+              `Embeddings: ${startEmbModel.name || 'N/A'}`,
+              `Collections: ${startCollectionsCount}`,
+              `Cached: ${startCacheCount} embeddings`
+            ].join('\n')
           }, null, 2);
 
         case 'stop':
           try {
             const { execSync } = require('child_process');
-            execSync('pkill -f "tsx src/index.ts"', { stdio: 'pipe' });
-            execSync('pkill -f "node dist/index.js"', { stdio: 'pipe' });
+            // Stop gracefully by finding Node.js process running raggy
+            try {
+              // Find PID of process running in raggy directory
+              const pid = execSync(`ps aux | grep -E "node.*raggy/.*index|tsx.*raggy/.*index" | grep -v grep | awk '{print $2}' | head -1`, { encoding: 'utf8' }).trim();
+              if (pid) {
+                execSync(`kill ${pid}`, { stdio: 'pipe' }); // SIGTERM (graceful)
+              }
+            } catch (e) {
+              // Fallback: try killing by port (most reliable)
+              try {
+                execSync('lsof -ti:3001 | xargs kill 2>/dev/null', { stdio: 'pipe' });
+              } catch (e2) {
+                // Last resort: generic raggy pattern
+                execSync('pkill -f "raggy.*index"', { stdio: 'pipe' });
+              }
+            }
             return JSON.stringify({
               success: true,
-              message: 'RAG server stopped'
+              message: '✅ RAG server stopped'
             }, null, 2);
           } catch (error) {
             return JSON.stringify({
               success: false,
-              error: 'Failed to stop RAG server'
+              error: 'Failed to stop RAG server (might not be running)'
             }, null, 2);
           }
 
         case 'status':
-          const statusResult = await makeApiRequest('status');
+          // Check if server is running without auto-starting it
+          let statusResult;
+          try {
+            statusResult = await makeApiRequest('status');
+          } catch (error) {
+            // Server is not running
+            return JSON.stringify({
+              success: false,
+              message: 'Status: ❌ Offline'
+            }, null, 2);
+          }
           const statusResultData = statusResult.data || statusResult;
+          const llmInfoStatus = statusResultData.llmConfig || {};
+          const embModelStatus = statusResultData.embeddingModel || {};
+          const collectionsCount = (statusResultData.collections || []).length;
+          const cacheCount = statusResultData.cacheStats?.embeddings?.keys || 0;
+          
           return JSON.stringify({
             success: true,
-            status: statusResultData
+            message: [
+              'Status: ✅ Online',
+              `Model: ${llmInfoStatus.model || 'llama3.2:1b'} @ ${llmInfoStatus.baseUrl || 'localhost:11434'}`,
+              `Embeddings: ${embModelStatus.name || 'N/A'}`,
+              `Collections: ${collectionsCount}`,
+              `Cached: ${cacheCount} embeddings`
+            ].join('\n')
           }, null, 2);
 
         case 'upload':
@@ -140,15 +189,20 @@ export default tool({
             }, null, 2);
           }
 
-          // Use API for upload via filePath (JSON)
           const uploadResult = await makeApiRequest('upload', 'POST', {
             filePath: args.filePath,
             collection: args.collection || 'default'
           });
 
+          const uploadData = uploadResult.data || uploadResult;
+          const results = uploadData.results || [];
+          const successCount = results.filter((r: any) => !r.error).length;
+          const chunks = uploadData.totalChunks || 0;
+          const time = uploadData.totalProcessingTime || 'N/A';
+          
           return JSON.stringify({
-            success: true,
-            result: uploadResult.data || uploadResult
+            success: uploadData.success !== false,
+            message: `✅ Upload complete | ${successCount} file(s) | ${chunks} chunks | ${time}`
           }, null, 2);
 
         case 'query':
@@ -165,18 +219,88 @@ export default tool({
             limit: args.limit || 5
           });
 
+          const queryData = queryResult.data || {};
+          const sources = queryData.sources || [];
+          
           return JSON.stringify({
             success: true,
-            answer: queryResult.data?.answer || 'No answer available',
-            sources: queryResult.data?.sources || [],
-            processingTime: queryResult.data?.processingTime || 'unknown'
+            message: `🔍 ${sources.length} source(s) | ${queryData.processingTime || 'N/A'}`,
+            answer: queryData.answer || 'No answer available',
+            sources: sources
           }, null, 2);
 
         case 'list':
           const listResult = await makeApiRequest('collections');
+          const collData = listResult.data || listResult;
+          const collections = collData.collections || [];
+          
+          if (collections.length === 0) {
+            return JSON.stringify({
+              success: true,
+              message: '📚 No collections'
+            }, null, 2);
+          }
+          
+          // Get details for each collection
+          const collectionDetails = [];
+          for (const collName of collections) {
+            try {
+              const info = await makeApiRequest(`collections/${collName}`);
+              const collInfo = info.data || info;
+              
+              // Get original document names from vector database
+              const vectorDbPath = path.join(PROJECT_ROOT, 'data', 'vectors', `${collName}.json`);
+              let documents = [];
+              let documentNames = new Set<string>();
+              
+              if (fs.existsSync(vectorDbPath)) {
+                try {
+                  const vectorData = JSON.parse(fs.readFileSync(vectorDbPath, 'utf-8'));
+                  // Extract unique document names from metadata
+                  for (const chunk of vectorData) {
+                    if (chunk.metadata && (chunk.metadata.source || chunk.metadata.fileName)) {
+                      documentNames.add(chunk.metadata.source || chunk.metadata.fileName);
+                    }
+                  }
+                  documents = Array.from(documentNames);
+                } catch (err) {
+                  // Fallback to filesystem listing
+                  const collectionPath = path.join(PROJECT_ROOT, 'data', 'documents', collName);
+                  if (fs.existsSync(collectionPath)) {
+                    documents = fs.readdirSync(collectionPath)
+                      .filter(file => file.endsWith('.pdf') || file.endsWith('.txt'));
+                  }
+                }
+              }
+              
+              collectionDetails.push({
+                name: collName,
+                documentCount: collInfo.documentCount || documents.length,
+                documents: documents
+              });
+            } catch (error) {
+              collectionDetails.push({
+                name: collName,
+                documentCount: 0,
+                documents: []
+              });
+            }
+          }
+          
+          // Format message
+          let message = `Collections: ${collections.length}\n\n`;
+          for (const coll of collectionDetails) {
+            message += `${coll.name}: ${coll.documentCount} document(s)\n`;
+            if (coll.documents.length > 0) {
+              for (const doc of coll.documents) {
+                message += `  - ${doc}\n`;
+              }
+            }
+          }
+          
           return JSON.stringify({
             success: true,
-            collections: listResult.data || listResult
+            message: message.trim()
           }, null, 2);
 
         case 'create_collection':
@@ -220,4 +344,3 @@ export default tool({
     }
   }
 });
-

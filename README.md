@@ -15,6 +15,8 @@ Local RAG (Retrieval-Augmented Generation) system with OpenCode integration.
 ## 🚀 Quick start
 
 ```bash
+git clone https://github.com/chironsb/raggy.git
+cd raggy
 npm install
 cp .env.example .env
 npm run dev
@@ -26,7 +28,7 @@ npm run dev
 
 ### 🤖 Via OpenCode agent
 
-The easiest way to use Raggy is through the OpenCode RAGagent:
+The easiest way to use Raggy is through the OpenCode RAG agent:
 
 ```bash
 raggy status                             # 📊 Check server status
@@ -109,6 +111,13 @@ The system uses parallel batch processing (50 chunks at a time) for fast uploads
 - 🚀 ~600 chunks in 1-2 seconds
 - 💻 Normal CPU usage during processing
 - ⚡ Results in milliseconds once indexed
+
+## 🔮 Future Plans
+
+- **GPU Acceleration** - Implement embedding generation on GPU for faster processing
+- **More file formats** - Add support for DOCX, HTML, Markdown
+- **Advanced chunking** - Semantic chunking based on document structure
+- **Web UI** - Simple web interface for document management
 
 ## 📄 License
 

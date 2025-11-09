@@ -7,8 +7,8 @@ This folder contains files for integrating Raggy with [OpenCode](https://opencod
 ```
 opencode-integration/
 ├── tool/
-│   ├── rag.ts              # Main RAG tool (recommended)
-│   └── rag-github.ts       # Alternative tool implementation
+│   ├── rag.ts              # Local version (copy to ~/.config/opencode/tool/)
+│   └── rag-github.ts       # GitHub version (generic paths, ready for distribution)
 └── agent/
     └── RAG.md              # RAG agent configuration
 ```
@@ -17,10 +17,17 @@ opencode-integration/
 
 ### 1. Install the RAG tool
 
-Copy the tool file to OpenCode's tool directory:
+Copy the tool file to OpenCode's tool directory. You can use either:
+
+- **`rag.ts`** - Local version (already configured with your path)
+- **`rag-github.ts`** - GitHub version (generic paths, requires configuration)
 
 ```bash
+# Option 1: Use rag.ts (if you cloned from your local repo)
 cp tool/rag.ts ~/.config/opencode/tool/
+
+# Option 2: Use rag-github.ts (if you cloned from GitHub)
+cp tool/rag-github.ts ~/.config/opencode/tool/rag.ts
 ```
 
 **Important:** Update the project path in the tool file. You have two options:
