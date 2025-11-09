@@ -105,13 +105,6 @@ data/              # 📁 Auto-created on first run
 5. **❓ Query** - Your question is embedded and compared to all chunks
 6. **📤 Return** - Most similar chunks are returned with their sources
 
-## ⚡ Performance
-
-The system uses parallel batch processing (50 chunks at a time) for fast uploads:
-- 🚀 ~600 chunks in 1-2 seconds
-- 💻 Normal CPU usage during processing
-- ⚡ Results in milliseconds once indexed
-
 ## 🔮 Future Plans
 
 - **GPU Acceleration** - Implement embedding generation on GPU for faster processing
