@@ -1,7 +1,32 @@
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
+export interface PageChunk {
+  content: string;
+  page: number;
+}
+
 export class TextChunker {
+  /**
+   * Chunk per PDF page (or per segment) so metadata.page is exact.
+   */
+  chunkTextWithPages(
+    pages: { page: number; text: string }[],
+    chunkSize?: number,
+    overlap?: number
+  ): PageChunk[] {
+    const out: PageChunk[] = [];
+    for (const { page, text } of pages) {
+      const trimmed = text.trim();
+      if (!trimmed) continue;
+      const parts = this.chunkText(trimmed, chunkSize, overlap);
+      for (const content of parts) {
+        out.push({ content, page });
+      }
+    }
+    return out;
+  }
+
   /**
    * Split text into overlapping chunks
    */

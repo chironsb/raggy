@@ -15,66 +15,47 @@ opencode-integration/
 
 ## Installation
 
-### 1. Install the RAG tool
-
-Copy the tool file to OpenCode's tool directory. You can use either:
-
-- **`rag.ts`** - Local version (already configured with your path)
-- **`rag-github.ts`** - GitHub version (generic paths, requires configuration)
+### Quick path (from repo root)
 
 ```bash
-# Option 1: Use rag.ts (if you cloned from your local repo)
-cp tool/rag.ts ~/.config/opencode/tool/
-
-# Option 2: Use rag-github.ts (if you cloned from GitHub)
-cp tool/rag-github.ts ~/.config/opencode/tool/rag.ts
+export RAGGY_PATH="/absolute/path/to/raggy"   # persist in ~/.zshrc
+chmod +x scripts/setup-opencode.sh
+./scripts/setup-opencode.sh
 ```
 
-**Important:** Update the project path in the tool file. You have two options:
+This copies `tool/rag-github.ts` → `~/.config/opencode/tool/raggy.ts` (tool name **`raggy`**) and `agent/RAG.md` → `~/.config/opencode/agent/RAG.md`. Any old `tool/rag.ts` is removed to avoid duplicates.
 
-**Option 1 - Set environment variable (recommended):**
-```bash
-echo 'export RAGGY_PATH="/path/to/your/raggy"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-**Option 2 - Edit the file directly:**
-Edit `~/.config/opencode/tool/rag.ts` line 7:
-```typescript
-const PROJECT_ROOT = process.env.RAGGY_PATH || '/path/to/your/raggy';
-```
-
-### 2. Install the RAG agent (optional)
-
-If you want a dedicated agent for RAG operations:
+### Manual copy
 
 ```bash
+cp tool/rag-github.ts ~/.config/opencode/tool/raggy.ts
+rm -f ~/.config/opencode/tool/rag.ts
 cp agent/RAG.md ~/.config/opencode/agent/
 ```
 
-The agent is configured to use:
-- **Model**: `ollama/llama3.2:1b` (local via Ollama)
-- **Tools**: `rag` tool enabled
-- **System prompt**: Optimized for document Q&A
+Set **`RAGGY_PATH`** to your Raggy clone so the tool can run `bun run dev` there.
+
+The RAG agent uses the **`raggy`** tool. In chat, use: `raggy status`, `raggy upload …`, `raggy query "…"`, `raggy list`, `raggy stop`. Answers come from your OpenCode model using Raggy’s **context + sources**.
 
 ## Usage
 
 ### With any OpenCode agent
 
-Once the tool is installed, you can use it from any agent (Build, Plan, etc.):
+Once the tool is installed, any agent with **`raggy: true`** (or that can call tools) can use:
 
-```bash
-status                                    # Check RAG server status
-upload /path/to/file.pdf collection       # Upload a document
-query "your question" collection          # Ask questions
-list                                      # List collections
+```text
+raggy status
+raggy upload /path/to/file.pdf [collection]
+raggy query "your question" [collection]
+raggy list
+raggy stop
 ```
 
 ### With RAG agent
 
 Switch to RAG agent (Tab or agent selector) for a dedicated RAG experience:
 
-```bash
+```text
 raggy status
 raggy upload /home/user/docs/paper.pdf research
 raggy query "What are the main findings?" research
@@ -97,29 +78,16 @@ Summarize the key points
 
 ## Configuration
 
-### Changing the LLM model
+### Chat model (OpenCode)
 
-Edit `agent/llm-config.json` or `~/.config/opencode/agent/RAGagent/llm-config.json`:
-
-```json
-{
-  "provider": "ollama",
-  "baseUrl": "http://localhost:11434",
-  "model": "llama3.2:1b"
-}
-```
-
-Available models (if you have them in Ollama):
-- `llama3.2:1b` - Fast, lightweight (1GB RAM)
-- `llama3.2:3b` - Balanced (3GB RAM)
-- `qwen2.5:7b` - More capable (8GB RAM)
+The `model:` field in `agent/RAG.md` is the **OpenCode / Ollama** model that **writes answers** after tool calls. Change it to any model you have installed. This is separate from **embeddings**, which Raggy loads from `EMBEDDING_MODEL` in Raggy’s `.env`.
 
 ### Adjusting RAG settings
 
 Edit your Raggy `.env` file (not these OpenCode files):
 
 ```bash
-RAG_SIMILARITY_THRESHOLD=0.3    # Lower = more results
+RAG_SIMILARITY_THRESHOLD=0.35   # Lower = more results (try 0.25–0.5)
 RAG_CHUNK_SIZE=1000             # Chunk size in characters
 RAG_MAX_RESULTS=5               # Max results per query
 ```
@@ -127,28 +95,26 @@ RAG_MAX_RESULTS=5               # Max results per query
 ## Troubleshooting
 
 **Tool not found:**
-- Make sure `rag.ts` is in `~/.config/opencode/tool/`
-- Check that `PROJECT_ROOT` points to the correct path
+- Make sure `raggy.ts` is in `~/.config/opencode/tool/` and `RAG.md` has `tools: raggy: true`
+- Set **`RAGGY_PATH`** to your Raggy repo (the tool spawns `bun run dev` there)
 - Restart OpenCode
 
 **Server won't start:**
-- Check that Raggy dependencies are installed: `npm install`
+- Check that Raggy dependencies are installed: `bun install`
 - Verify port 3001 is available: `lsof -i :3001`
 - Check Raggy logs: `tail -f logs/raggy.log`
 
 **"Connection refused" errors:**
 - The tool auto-starts the server, wait a few seconds
-- Manually start: `cd /path/to/raggy && npm run dev`
+- Manually start: `cd /path/to/raggy && bun run dev`
 
-**Agent uses wrong model:**
-- OpenCode agents use the model selected in the UI by default
-- RAGagent config specifies Ollama, but UI selection may override
-- The RAG *server* always uses the model in Raggy's `.env`
+**Agent / model:**
+- OpenCode chooses the **chat** model (answers). Raggy only runs **embeddings + search**; configure `EMBEDDING_MODEL` in Raggy’s `.env`.
 
 ## Notes
 
 - The RAG tool and agent are independent - you can use the tool without the agent
 - The agent provides a better UX with optimized prompts for document Q&A
 - Both use the same Raggy server backend (localhost:3001)
-- Server state persists - uploaded documents remain after restarts
+- Server state persists - uploaded documents remain after restarts (under `data/lancedb`, `data/lexical`, `data/documents`)
 

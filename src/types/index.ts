@@ -7,12 +7,22 @@ export interface DocumentChunk {
     page?: number;
     chunkIndex: number;
     totalChunks: number;
+    documentType?: string;
+    title?: string;
+    fileName?: string;
+    fileSize?: number;
   };
 }
 
 export interface SearchResult {
+  /** Chunk id (Lance row id) */
+  id?: string;
   content: string;
   score: number;
+  /** Cosine-related score from vector search when available */
+  vectorScore?: number;
+  /** Normalized RRF contribution when hybrid search is on */
+  rrfScore?: number;
   metadata: DocumentChunk['metadata'];
 }
 
@@ -24,6 +34,9 @@ export interface QueryRequest {
 }
 
 export interface QueryResponse {
+  /** Concatenated retrieved passages for the caller's LLM (Raggy does not run a generative model). */
+  context: string;
+  /** @deprecated Same as `context`; kept for older API clients. */
   answer: string;
   sources: SearchResult[];
   processingTime: number;
@@ -63,9 +76,18 @@ export interface RagConfig {
   maxResults: number;
   similarityThreshold: number;
   embeddingModel: string;
+  /** @deprecated Legacy JSON vector path; LanceDB uses `lanceDbPath`. */
   vectorDbPath: string;
+  lanceDbPath: string;
+  lexicalIndexPath: string;
   documentsPath: string;
   cachePath: string;
+  hybridSearch: boolean;
+  hybridRelaxThreshold: boolean;
+  hybridVectorPool: number;
+  hybridLexicalPool: number;
+  rrfK: number;
+  vectorIndexMinRows: number;
 }
 
 export interface ServerConfig {

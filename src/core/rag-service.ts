@@ -7,7 +7,7 @@ import { config } from '../config';
 import { PDFProcessor } from './pdf-processor';
 import { TextChunker } from './chunker';
 import { LocalEmbeddingService } from './embeddings';
-import { PersistentVectorDB } from './vector-db';
+import { VectorStore } from './vector-store';
 import {
   DocumentChunk,
   QueryRequest,
@@ -20,14 +20,14 @@ export class RAGService {
   private pdfProcessor: PDFProcessor;
   private chunker: TextChunker;
   private embeddings: LocalEmbeddingService;
-  private vectorDb: PersistentVectorDB;
+  private vectorStore: VectorStore;
   private initialized = false;
 
   constructor() {
     this.pdfProcessor = new PDFProcessor();
     this.chunker = new TextChunker();
     this.embeddings = new LocalEmbeddingService();
-    this.vectorDb = new PersistentVectorDB();
+    this.vectorStore = new VectorStore();
   }
 
   /**
@@ -43,17 +43,14 @@ export class RAGService {
     try {
       logger.info('Initializing RAG Service...');
 
-      // Initialize embeddings (this takes time on first run)
       await this.embeddings.initialize();
-
-      // Ensure data directories exist
       this.ensureDirectories();
+      await this.vectorStore.initialize();
 
       this.initialized = true;
 
       const initTime = Date.now() - startTime;
       logger.performance('RAG Service initialization', initTime);
-
     } catch (error) {
       logger.error('RAG Service initialization failed', error as Error);
       throw new Error(`Initialization failed: ${(error as Error).message}`);
@@ -78,24 +75,14 @@ export class RAGService {
     try {
       logger.info(`Indexing document: ${filePath} into collection: ${collectionName}`);
 
-      // Validate document file
       if (!this.pdfProcessor.validateFile(filePath, originalFilename)) {
         throw new Error('Invalid document file');
       }
 
-      // Extract text
-      const text = await this.pdfProcessor.extractText(filePath, originalFilename);
-
-      if (!text.trim()) {
-        throw new Error('No text could be extracted from document');
-      }
-
-      // Get document metadata
-      let docMetadata = {};
+      let docMetadata: Record<string, unknown> = {};
       if (isPdf) {
-        docMetadata = await this.pdfProcessor.getMetadata(filePath) || {};
+        docMetadata = (await this.pdfProcessor.getMetadata(filePath)) || {};
       } else {
-        // For text files, create basic metadata
         const stats = fs.statSync(filePath);
         docMetadata = {
           pages: 1,
@@ -105,34 +92,45 @@ export class RAGService {
         };
       }
 
-      // Chunk the text
-      const textChunks = this.chunker.chunkText(text);
-      logger.debug(`Created ${textChunks.length} chunks`);
+      let pageChunks: { content: string; page: number }[];
+      if (isPdf) {
+        const pages = await this.pdfProcessor.extractPages(filePath, originalFilename);
+        if (pages.length === 0 || !pages.some((p) => p.text.trim())) {
+          throw new Error('No text could be extracted from document');
+        }
+        pageChunks = this.chunker.chunkTextWithPages(pages);
+      } else {
+        const text = await this.pdfProcessor.extractText(filePath, originalFilename);
+        if (!text.trim()) {
+          throw new Error('No text could be extracted from document');
+        }
+        pageChunks = this.chunker.chunkTextWithPages([{ page: 1, text }]);
+      }
 
-      // Create document chunks with metadata
-      const chunks: DocumentChunk[] = textChunks.map((content, index) => ({
+      if (pageChunks.length === 0) {
+        throw new Error('No text could be extracted from document');
+      }
+
+      logger.debug(`Created ${pageChunks.length} chunks`);
+
+      const chunks: DocumentChunk[] = pageChunks.map((pc, index) => ({
         id: `${documentId}_chunk_${index}`,
-        content,
+        content: pc.content,
         metadata: {
           source: path.basename(filePath),
-          page: isPdf ? Math.floor(index / 10) + 1 : 1, // Rough page estimation for PDFs
+          page: pc.page,
           chunkIndex: index,
-          totalChunks: textChunks.length,
+          totalChunks: pageChunks.length,
           documentType: isPdf ? 'pdf' : 'txt',
           ...metadata,
           ...docMetadata
         }
       }));
 
-      // Generate embeddings
-      const embeddings = await this.embeddings.generateEmbeddings(
-        chunks.map(chunk => chunk.content)
-      );
+      const embeddings = await this.embeddings.generateEmbeddings(chunks.map((chunk) => chunk.content));
 
-      // Store in vector database
-      await this.vectorDb.addDocuments(collectionName, chunks, embeddings);
+      await this.vectorStore.addDocuments(collectionName, chunks, embeddings);
 
-      // Copy file to documents directory for persistence
       const extension = isPdf ? '.pdf' : '.txt';
       const destPath = path.join(config.rag.documentsPath, collectionName, `${documentId}${extension}`);
       this.ensureDirectory(path.dirname(destPath));
@@ -152,15 +150,23 @@ export class RAGService {
         chunksCount: chunks.length,
         processingTime
       };
-
     } catch (error) {
       logger.error(`Document indexing failed: ${filePath}`, error as Error);
       throw new Error(`Indexing failed: ${(error as Error).message}`);
     }
   }
 
+  private searchFingerprint(threshold: number | undefined, limit: number | undefined): string {
+    return [
+      config.rag.hybridSearch ? 'h1' : 'h0',
+      config.rag.hybridRelaxThreshold ? 'r1' : 'r0',
+      threshold ?? config.rag.similarityThreshold,
+      limit ?? config.rag.maxResults
+    ].join(':');
+  }
+
   /**
-   * Query the RAG system
+   * Query the RAG system (retrieval only — combine `context` with your LLM in OpenCode or elsewhere)
    */
   async query(request: QueryRequest): Promise<QueryResponse> {
     await this.ensureInitialized();
@@ -172,8 +178,8 @@ export class RAGService {
 
       logger.info(`Processing query: "${question}" in collection: ${collection}`);
 
-      // Check cache first
-      const cachedResult = cache.getSearchResult(question, collection);
+      const fp = this.searchFingerprint(threshold, limit);
+      const cachedResult = cache.getSearchResult(question, collection, fp);
       if (cachedResult) {
         logger.debug('Returning cached query result');
         return {
@@ -182,79 +188,64 @@ export class RAGService {
         };
       }
 
-      // Generate query embedding
       const queryEmbedding = await this.embeddings.generateQueryEmbedding(question);
 
-      // Search vector database
-      const searchResults = await this.vectorDb.search(
+      const searchResults = await this.vectorStore.search(
         collection,
         queryEmbedding,
-        limit || config.rag.maxResults
+        question.trim(),
+        limit || config.rag.maxResults,
+        threshold !== undefined ? threshold : config.rag.similarityThreshold
       );
 
-      // Filter by similarity threshold
-      const similarityThreshold = threshold !== undefined ? threshold : config.rag.similarityThreshold;
-      const filteredResults = searchResults.filter(
-        result => result.score >= similarityThreshold
-      );
-
-      // Format context for LLM
-      const context = filteredResults
-        .map(result => `[${result.metadata.source}, Page ${result.metadata.page}]\n${result.content}`)
+      const context = searchResults
+        .map((result) => `[${result.metadata.source}, Page ${result.metadata.page ?? '?'}]\n${result.content}`)
         .join('\n\n---\n\n');
 
       const processingTime = Date.now() - startTime;
 
       const response: QueryResponse = {
-        answer: context || 'No relevant content found in the documents.', // For now, return context. In production, you'd send to LLM
-        sources: filteredResults,
+        context: context || 'No relevant content found in the documents.',
+        answer: context || 'No relevant content found in the documents.',
+        sources: searchResults,
         processingTime
       };
 
-      // Cache the result
-      cache.setSearchResult(question, collection, response);
+      cache.setSearchResult(question, collection, response, fp);
 
       logger.info(`Query processed successfully`, {
         collection,
-        resultsCount: filteredResults.length,
+        resultsCount: searchResults.length,
         processingTime: `${processingTime}ms`
       });
 
       return response;
-
     } catch (error) {
       logger.error(`Query failed: ${request.question}`, error as Error);
       throw new Error(`Query failed: ${(error as Error).message}`);
     }
   }
 
-  /**
-   * List all collections
-   */
   async listCollections(): Promise<string[]> {
     await this.ensureInitialized();
-    return await this.vectorDb.listCollections();
+    return await this.vectorStore.listCollections();
   }
 
-  /**
-   * Get collection information
-   */
   async getCollectionInfo(name: string): Promise<CollectionInfo | null> {
     await this.ensureInitialized();
 
-    const stats = await this.vectorDb.getCollectionStats(name);
+    const stats = await this.vectorStore.getCollectionStats(name);
     if (!stats) {
       return null;
     }
 
-    // Get document count from filesystem
     const collectionPath = path.join(config.rag.documentsPath, name);
     let documentCount = 0;
 
     try {
       if (fs.existsSync(collectionPath)) {
         const files = fs.readdirSync(collectionPath);
-        documentCount = files.filter(file => file.endsWith('.pdf')).length;
+        documentCount = files.filter((file) => file.endsWith('.pdf') || file.endsWith('.txt')).length;
       }
     } catch (error) {
       logger.warn(`Could not count documents in collection: ${name}`, error);
@@ -264,21 +255,16 @@ export class RAGService {
       name,
       documentCount,
       chunkCount: stats.count,
-      createdAt: new Date(), // TODO: Store creation time
-      lastModified: new Date() // TODO: Store modification time
+      createdAt: new Date(),
+      lastModified: new Date()
     };
   }
 
-  /**
-   * Delete a collection
-   */
   async deleteCollection(name: string): Promise<void> {
     await this.ensureInitialized();
 
-    // Delete from vector DB
-    await this.vectorDb.deleteCollection(name);
+    await this.vectorStore.deleteCollection(name);
 
-    // Delete documents from filesystem
     const collectionPath = path.join(config.rag.documentsPath, name);
     try {
       if (fs.existsSync(collectionPath)) {
@@ -290,39 +276,38 @@ export class RAGService {
     }
   }
 
-  /**
-   * Get system status
-   */
   async getStatus(): Promise<{
     initialized: boolean;
-    embeddingModel: any;
+    embeddingModel: { name: string; initialized: boolean };
+    retrieval: { backend: string; hybridSearch: boolean };
     collections: string[];
-    cacheStats: any;
+    cacheStats: ReturnType<typeof cache.getStats>;
   }> {
     return {
       initialized: this.initialized,
       embeddingModel: this.embeddings.getModelInfo(),
+      retrieval: {
+        backend: 'lancedb',
+        hybridSearch: config.rag.hybridSearch
+      },
       collections: await this.listCollections(),
       cacheStats: cache.getStats()
     };
   }
 
-  /**
-   * Ensure service is initialized
-   */
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       await this.initialize();
     }
   }
 
-  /**
-   * Ensure required directories exist
-   */
   private ensureDirectories(): void {
     const dirs = [
+      config.rag.lanceDbPath,
+      config.rag.lexicalIndexPath,
       config.rag.vectorDbPath,
       config.rag.documentsPath,
+      path.join(config.rag.documentsPath, 'temp'),
       config.rag.cachePath,
       'logs'
     ];
@@ -332,9 +317,6 @@ export class RAGService {
     }
   }
 
-  /**
-   * Ensure a directory exists
-   */
   private ensureDirectory(dirPath: string): void {
     try {
       if (!fs.existsSync(dirPath)) {
@@ -347,5 +329,4 @@ export class RAGService {
   }
 }
 
-// Singleton instance
 export const ragService = new RAGService();

@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 npm-debug.log*
+package-lock.json
 yarn-debug.log*
 yarn-error.log*
 
@@ -18,7 +19,8 @@ dist/
 data/
 logs/
 
-# OS generated files
+# OS / desktop
+.directory
 .DS_Store
 .DS_Store?
 ._*
@@ -38,5 +40,6 @@ Thumbs.db
 tmp/
 temp/
 
-# Local OpenCode tool (contains personal path)
+# Local OpenCode tool copies; template is rag-github.ts → ~/.config/opencode/tool/raggy.ts
+opencode-integration/tool/raggy.ts
 opencode-integration/tool/rag.ts

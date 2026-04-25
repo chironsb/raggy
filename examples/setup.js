@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Raggy Setup Helper
@@ -59,23 +59,17 @@ async function main() {
   // Check prerequisites
   log(colors.yellow, '\n📋 Checking prerequisites...');
 
-  const nodeOk = checkCommand('node --version', 'Node.js 18+');
-  const npmOk = checkCommand('npm --version', 'npm');
+  const bunOk = checkCommand('bun --version', 'Bun 1.1+');
   const ollamaOk = checkCommand('ollama --version', 'Ollama');
 
-  if (!nodeOk) {
-    log(colors.red, '❌ Node.js 18+ is required. Please install from https://nodejs.org');
-    process.exit(1);
-  }
-
-  if (!npmOk) {
-    log(colors.red, '❌ npm is required. Please install Node.js first.');
+  if (!bunOk) {
+    log(colors.red, '❌ Bun is required. Install from https://bun.sh');
     process.exit(1);
   }
 
   // Install dependencies
   log(colors.yellow, '\n📦 Installing dependencies...');
-  if (!runCommand('npm install', 'Installing npm dependencies')) {
+  if (!runCommand('bun install', 'Installing dependencies with Bun')) {
     process.exit(1);
   }
 
@@ -89,7 +83,7 @@ async function main() {
   }
 
   // Create data directories
-  const dirs = ['data/vectors', 'data/documents', 'data/cache', 'logs'];
+  const dirs = ['data/vectors', 'data/lancedb', 'data/lexical', 'data/documents', 'data/cache', 'logs'];
   dirs.forEach(dir => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -99,7 +93,7 @@ async function main() {
 
   // Build TypeScript
   log(colors.yellow, '\n🔨 Building TypeScript...');
-  if (!runCommand('npm run build', 'Building TypeScript')) {
+  if (!runCommand('bun run build', 'Building TypeScript')) {
     process.exit(1);
   }
 
@@ -135,7 +129,7 @@ async function main() {
   // Test the system
   log(colors.yellow, '\n🧪 Testing the system...');
   try {
-    execSync('timeout 10s npm run dev', { stdio: 'pipe' });
+    execSync('timeout 10s bun run dev', { stdio: 'pipe' });
     log(colors.green, '✅ Server starts successfully');
   } catch {
     log(colors.yellow, '⚠️ Server test inconclusive (may be normal)');
@@ -143,15 +137,15 @@ async function main() {
 
   log(colors.green, '\n🎉 Setup completed successfully!');
   log(colors.cyan, '\nNext steps:');
-  log(colors.reset, '1. Start Raggy: npm run dev');
+  log(colors.reset, '1. Start Raggy: bun run dev');
   log(colors.reset, '2. Upload a PDF: node examples/upload-pdf.js your-document.pdf');
   log(colors.reset, '3. Ask questions: node examples/query.js "What is machine learning?"');
   log(colors.reset, '4. For OpenCode integration, see README.md');
 
   log(colors.magenta, '\n📚 Useful commands:');
-  log(colors.reset, '- npm run dev          # Start development server');
-  log(colors.reset, '- npm run build        # Build for production');
-  log(colors.reset, '- npm run lint         # Run linter');
+  log(colors.reset, '- bun run dev          # Start development server');
+  log(colors.reset, '- bun run build        # Build for production');
+  log(colors.reset, '- bun run lint         # Run linter');
   log(colors.reset, '- ollama list          # Check downloaded models');
   log(colors.reset, '- tail -f logs/raggy.log # View logs');
 }

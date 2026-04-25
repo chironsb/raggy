@@ -97,13 +97,13 @@ export class Cache {
     return this.get(key);
   }
 
-  public setSearchResult(query: string, collection: string, results: any): boolean {
-    const key = `search:${collection}:${this.hashString(query)}`;
+  public setSearchResult(query: string, collection: string, results: any, fingerprint = ''): boolean {
+    const key = `search:${collection}:${this.hashString(query + '\n' + fingerprint)}`;
     return this.set(key, results, 1800000); // 30 minutes
   }
 
-  public getSearchResult(query: string, collection: string): any | undefined {
-    const key = `search:${collection}:${this.hashString(query)}`;
+  public getSearchResult(query: string, collection: string, fingerprint = ''): any | undefined {
+    const key = `search:${collection}:${this.hashString(query + '\n' + fingerprint)}`;
     return this.get(key);
   }
 

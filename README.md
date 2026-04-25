@@ -1,117 +1,102 @@
-# 🤖 Raggy
+# Raggy
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+**Work in progress** — local document **retrieval** (PDF/TXT): embeddings, LanceDB, optional hybrid keyword search. Raggy does **not** generate answers; it returns **`context`** + **`sources`** for your LLM (e.g. in OpenCode).
 
-Local RAG (Retrieval-Augmented Generation) system with OpenCode integration.
+### Recent direction (short)
 
-## ✨ What it does
+- **Bun** for install/run (`node_modules` stays in the repo).
+- **LanceDB** + **MiniSearch** + **RRF** instead of a single big JSON scan — better scale and keyword + vector mix.
+- **Chunking** uses real **PDF page** numbers where possible.
+- **OpenCode** tool is named **`raggy`** (`raggy status`, `raggy upload`, …) so slash `/raggy` matches the tool id.
 
-- 📄 Upload PDFs and text files
-- 🔍 Search through documents using natural language
-- 💬 Get answers with sources and context
-- 🏠 Everything runs locally on your machine
+---
 
-## 🚀 Quick start
+## Install & run
 
 ```bash
 git clone https://github.com/chironsb/raggy.git
 cd raggy
-npm install
+bun install
 cp .env.example .env
-npm run dev
+bun run dev
 ```
 
-🌐 Server starts on `http://localhost:3001`
+Server: `http://localhost:3001`. Needs [Bun](https://bun.sh) 1.1+.
 
-## 📖 Usage
+---
 
-### 🤖 Via OpenCode agent
+## OpenCode (to match a working setup)
 
-The easiest way to use Raggy is through the OpenCode RAG agent:
+1. Put the repo path in your shell config (persistent):
 
-```bash
-raggy status                             # 📊 Check server status
-raggy upload /path/to/file.pdf [collection]  # ⬆️ Upload a document
-raggy query "your question" [collection]     # ❓ Ask questions
-raggy list                               # 📋 List all collections
-raggy stop                               # 🛑 Stop server
+   `export RAGGY_PATH="/absolute/path/to/raggy"`
+
+2. From the repo root:
+
+   ```bash
+   chmod +x scripts/setup-opencode.sh
+   ./scripts/setup-opencode.sh
+   ```
+
+   This installs `~/.config/opencode/tool/raggy.ts`, `agent/RAG.md`, and **`raggy-root.txt`** (path to this clone so the tool works even when OpenCode does not inherit `RAGGY_PATH`). Removes an old `tool/rag.ts` if present.
+
+3. Restart **OpenCode**, pick the **RAG** agent (Tab).
+
+### Chat commands
+
+Use the same **collection** name for upload and query.
+
+```text
+/raggy status   # starts the server if it was down, then shows status
+/raggy upload /path/to/file.pdf mycollection
+/raggy query "Your question here?" mycollection
+/raggy list
+/raggy stop
 ```
 
-### 🌐 Via REST API
+You can also type `raggy …` without the slash if your UI sends it the same way.
+
+### Agent “personality” (tone, rules, `/raggy` parsing)
+
+Instructions for the **RAG** chat agent live in Markdown:
+
+| Where | What |
+|-------|------|
+| **`opencode-integration/agent/RAG.md`** (this repo) | Source you edit and version in git. |
+| **`~/.config/opencode/agent/RAG.md`** | What OpenCode actually loads after setup. |
+
+Change things like: how strictly to parse `raggy …` commands, whether to avoid explaining chunk scores/RRF after a query, citation style, etc. After editing the repo file, run `./scripts/setup-opencode.sh` again **or** copy `RAG.md` by hand, then **restart OpenCode**.
+
+### Models (two different roles)
+
+| What | Where to change | Notes |
+|------|-----------------|--------|
+| **Chat model** (writes the answer in OpenCode) | Top of **`RAG.md`**: YAML field **`model:`** (e.g. `ollama/qwen3:1.7b`). | OpenCode UI may override the active model; provider / model list is often in **`~/.config/opencode/opencode.json`**. |
+| **Embedding model** (Raggy: vectors for search) | **`.env`**: **`EMBEDDING_MODEL`** (see `.env.example`). | Changing it usually means **re-uploading** documents so vectors match the new model. |
+
+---
+
+## API (optional)
 
 ```bash
-# ⬆️ Upload document
-curl -X POST http://localhost:3001/api/upload \
-  -H "Content-Type: application/json" \
-  -d '{"filePath": "/path/to/file.pdf", "collection": "docs"}'
-
-# ❓ Query documents
+curl -s http://localhost:3001/api/status
 curl -X POST http://localhost:3001/api/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "What is this about?", "collection": "docs"}'
+  -d '{"question":"…","collection":"mycollection"}'
 ```
 
-## 🎯 Features
+More detail: `opencode-integration/README.md`, knobs in `.env.example`.
 
-- 📄 **PDF & TXT processing** - Extract text and metadata
-- ✂️ **Smart chunking** - Split documents into meaningful pieces
-- 🧠 **Local embeddings** - Uses Xenova/transformers (no API calls)
-- 🔎 **Vector search** - Fast similarity search with cosine similarity
-- 💾 **Persistent storage** - JSON-based vector database
-- 📁 **Collection management** - Organize documents into collections
-- 🔗 **OpenCode integration** - Full agent support with custom tools
+---
 
-## ⚙️ Configuration
+## Upgrade from old Raggy
 
-Edit `.env` to customize:
+Older **`data/vectors/*.json`** indexes are **not** used anymore. Safe approach: delete or archive `./data`, then **upload documents again**.
+
+---
+
+## Tests
 
 ```bash
-PORT=3001
-RAG_CHUNK_SIZE=1000
-RAG_CHUNK_OVERLAP=200
-RAG_SIMILARITY_THRESHOLD=0.3
-EMBEDDING_MODEL=Xenova/paraphrase-multilingual-MiniLM-L12-v2
+bun run test
 ```
-
-Lower `RAG_SIMILARITY_THRESHOLD` (0.2-0.4) for more results, higher (0.6-0.8) for stricter matching.
-
-## 📋 Requirements
-
-- 🟢 Node.js 18+
-- 🧠 2GB+ RAM (4GB recommended for large documents)
-
-## 🏗️ Project structure
-
-```
-src/
-├── core/          # 🧠 RAG logic (embeddings, chunking, vector DB)
-├── server.ts      # 🌐 Express API server
-├── tools/         # 🔧 OpenCode integration
-└── index.ts       # 🚪 Entry point
-
-data/              # 📁 Auto-created on first run
-├── vectors/       # 📊 Vector database (JSON files)
-├── documents/     # 📄 Uploaded PDFs/TXT files
-└── cache/         # ⚡ Embedding cache
-```
-
-## 🔄 How it works
-
-1. **⬆️ Upload** - PDF/TXT files are processed and text is extracted
-2. **✂️ Chunk** - Text is split into overlapping chunks (default 1000 chars)
-3. **🧠 Embed** - Each chunk gets a vector embedding (384 dimensions)
-4. **💾 Store** - Vectors are saved to JSON files in `data/vectors/`
-5. **❓ Query** - Your question is embedded and compared to all chunks
-6. **📤 Return** - Most similar chunks are returned with their sources
-
-## 🔮 Future Plans
-
-- **GPU Acceleration** - Implement embedding generation on GPU for faster processing
-- **More file formats** - Add support for DOCX, HTML, Markdown
-- **Advanced chunking** - Semantic chunking based on document structure
-- **Web UI** - Simple web interface for document management
-
-## 📄 License
-
-MIT

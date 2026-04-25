@@ -3,10 +3,27 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Project root path - UPDATE THIS to your Raggy installation directory
-const PROJECT_ROOT = process.env.RAGGY_PATH || '/path/to/raggy';
+/**
+ * Raggy repo root. OpenCode often runs tools without your shell env — then RAGGY_PATH is empty.
+ * Fallback: one-line file written by scripts/setup-opencode.sh → ~/.config/opencode/raggy-root.txt
+ */
+function getRaggyRoot(): string {
+  const fromEnv = process.env.RAGGY_PATH?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const marker = path.join(process.env.HOME || '', '.config/opencode/raggy-root.txt');
+    if (fs.existsSync(marker)) {
+      const line = fs.readFileSync(marker, 'utf-8').trim().split(/\r?\n/)[0]?.trim();
+      if (line) return line;
+    }
+  } catch {
+    /* ignore */
+  }
+  return '/path/to/raggy';
+}
 
 async function ensureServerRunning(): Promise<void> {
+  const root = getRaggyRoot();
   return new Promise((resolve) => {
     const req = http.get('http://localhost:3001/api/status', (res) => {
       if (res.statusCode === 200) {
@@ -18,17 +35,21 @@ async function ensureServerRunning(): Promise<void> {
 
     req.on('error', async () => {
       try {
+        if (!fs.existsSync(path.join(root, 'package.json'))) {
+          resolve();
+          return;
+        }
         const { spawn } = require('child_process');
-        const serverProcess = spawn('npm', ['run', 'dev'], {
-          cwd: PROJECT_ROOT,
+        const serverProcess = spawn('bun', ['run', 'dev'], {
+          cwd: root,
           detached: true,
-          stdio: 'ignore'
+          stdio: 'ignore',
+          env: { ...process.env, RAGGY_PATH: root }
         });
 
         serverProcess.unref();
-        setTimeout(() => resolve(), 5000);
+        setTimeout(() => resolve(), 8000);
       } catch (startError) {
-        // Server might already be starting
         resolve();
       }
     });
@@ -77,7 +98,7 @@ export default tool({
   description: 'Interact with the local RAG (Retrieval-Augmented Generation) system for document Q&A. Use this tool to start/stop the server, upload documents, query documents, and manage collections.',
   args: {
     action: tool.schema.enum(['start', 'stop', 'status', 'upload', 'query', 'list', 'create_collection', 'delete_collection'])
-      .describe('Action to perform: start (start server), stop (stop server), status (check status), upload (upload documents), query (ask questions), list (list collections), create_collection, delete_collection'),
+      .describe('Action to perform: start (start server), stop (stop server), status (start if needed, then check status), upload (upload documents), query (ask questions), list (list collections), create_collection, delete_collection'),
     filePath: tool.schema.string().optional()
       .describe('Path to PDF/TXT file or folder containing PDFs (required for upload action)'),
     collection: tool.schema.string().optional()
@@ -89,8 +110,8 @@ export default tool({
   },
   async execute(args, context) {
     try {
-      // Only auto-start server for actions that need it (not for status/stop)
-      if (args.action !== 'status' && args.action !== 'stop') {
+      // Auto-start if down for every action except stop (status wakes the server too)
+      if (args.action !== 'stop') {
         await ensureServerRunning();
       }
 
@@ -99,19 +120,19 @@ export default tool({
           await ensureServerRunning();
           const startStatus = await makeApiRequest('status');
           const startStatusData = startStatus.data || startStatus;
-          const startLlmInfo = startStatusData.llmConfig || {};
           const startEmbModel = startStatusData.embeddingModel || {};
+          const startRetrieval = startStatusData.retrieval || {};
           const startCollectionsCount = (startStatusData.collections || []).length;
-          const startCacheCount = startStatusData.cacheStats?.embeddings?.keys || 0;
+          const startCacheKeys = startStatusData.cacheStats?.keys ?? 0;
           
           return JSON.stringify({
             success: true,
             message: [
               'Status: ✅ Online',
-              `Model: ${startLlmInfo.model || 'llama3.2:1b'} @ ${startLlmInfo.baseUrl || 'localhost:11434'}`,
-              `Embeddings: ${startEmbModel.name || 'N/A'}`,
+              `Retrieval: ${startRetrieval.backend || 'lancedb'} (hybrid: ${startRetrieval.hybridSearch !== false ? 'on' : 'off'})`,
+              `Embeddings: ${startEmbModel.name || 'N/A'} (local, Xenova/transformers)`,
               `Collections: ${startCollectionsCount}`,
-              `Cached: ${startCacheCount} embeddings`
+              `Cache keys: ${startCacheKeys} (embeddings + query cache)`
             ].join('\n')
           }, null, 2);
 
@@ -121,7 +142,7 @@ export default tool({
             // Stop gracefully by finding Node.js process running raggy
             try {
               // Find PID of process running in raggy directory
-              const pid = execSync(`ps aux | grep -E "node.*raggy/.*index|tsx.*raggy/.*index" | grep -v grep | awk '{print $2}' | head -1`, { encoding: 'utf8' }).trim();
+              const pid = execSync(`ps aux | grep -E "bun.*raggy/.*index|node.*raggy/.*index" | grep -v grep | awk '{print $2}' | head -1`, { encoding: 'utf8' }).trim();
               if (pid) {
                 execSync(`kill ${pid}`, { stdio: 'pipe' }); // SIGTERM (graceful)
               }
@@ -145,34 +166,43 @@ export default tool({
             }, null, 2);
           }
 
-        case 'status':
-          // Check if server is running without auto-starting it
-          let statusResult;
-          try {
-            statusResult = await makeApiRequest('status');
-          } catch (error) {
-            // Server is not running
+        case 'status': {
+          let statusResult: any;
+          let lastError: unknown;
+          for (let attempt = 0; attempt < 12; attempt++) {
+            try {
+              statusResult = await makeApiRequest('status');
+              break;
+            } catch (e) {
+              lastError = e;
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+          }
+          if (statusResult === undefined) {
             return JSON.stringify({
               success: false,
-              message: 'Status: ❌ Offline'
+              message:
+                'Status: ❌ Offline. Fix: run ./scripts/setup-opencode.sh from the Raggy repo (writes ~/.config/opencode/raggy-root.txt), or set RAGGY_PATH, then retry. Also try: cd <raggy> && bun run dev',
+              detail: lastError != null ? String(lastError) : undefined
             }, null, 2);
           }
           const statusResultData = statusResult.data || statusResult;
-          const llmInfoStatus = statusResultData.llmConfig || {};
           const embModelStatus = statusResultData.embeddingModel || {};
+          const retrievalStatus = statusResultData.retrieval || {};
           const collectionsCount = (statusResultData.collections || []).length;
-          const cacheCount = statusResultData.cacheStats?.embeddings?.keys || 0;
+          const cacheKeys = statusResultData.cacheStats?.keys ?? 0;
           
           return JSON.stringify({
             success: true,
             message: [
               'Status: ✅ Online',
-              `Model: ${llmInfoStatus.model || 'llama3.2:1b'} @ ${llmInfoStatus.baseUrl || 'localhost:11434'}`,
-              `Embeddings: ${embModelStatus.name || 'N/A'}`,
+              `Retrieval: ${retrievalStatus.backend || 'lancedb'} (hybrid: ${retrievalStatus.hybridSearch !== false ? 'on' : 'off'})`,
+              `Embeddings: ${embModelStatus.name || 'N/A'} (local)`,
               `Collections: ${collectionsCount}`,
-              `Cached: ${cacheCount} embeddings`
+              `Cache keys: ${cacheKeys}`
             ].join('\n')
           }, null, 2);
+        }
 
         case 'upload':
           if (!args.filePath) {
@@ -199,7 +229,7 @@ export default tool({
           const successCount = results.filter((r: any) => !r.error).length;
           const chunks = uploadData.totalChunks || 0;
           const time = uploadData.totalProcessingTime || 'N/A';
-          
+
           return JSON.stringify({
             success: uploadData.success !== false,
             message: `✅ Upload complete | ${successCount} file(s) | ${chunks} chunks | ${time}`
@@ -221,11 +251,13 @@ export default tool({
 
           const queryData = queryResult.data || {};
           const sources = queryData.sources || [];
-          
+          const context = queryData.context ?? queryData.answer ?? '';
+
           return JSON.stringify({
             success: true,
-            message: `🔍 ${sources.length} source(s) | ${queryData.processingTime || 'N/A'}`,
-            answer: queryData.answer || 'No answer available',
+            message: `🔍 ${sources.length} source(s) | ${queryData.processingTime ?? 'N/A'}ms`,
+            context,
+            answer: queryData.answer ?? context,
             sources: sources
           }, null, 2);
 
@@ -249,7 +281,7 @@ export default tool({
               const collInfo = info.data || info;
               
               // Get original document names from vector database
-              const vectorDbPath = path.join(PROJECT_ROOT, 'data', 'vectors', `${collName}.json`);
+              const vectorDbPath = path.join(getRaggyRoot(), 'data', 'vectors', `${collName}.json`);
               let documents = [];
               let documentNames = new Set<string>();
               
@@ -265,7 +297,7 @@ export default tool({
                   documents = Array.from(documentNames);
                 } catch (err) {
                   // Fallback to filesystem listing
-                  const collectionPath = path.join(PROJECT_ROOT, 'data', 'documents', collName);
+                  const collectionPath = path.join(getRaggyRoot(), 'data', 'documents', collName);
                   if (fs.existsSync(collectionPath)) {
                     documents = fs.readdirSync(collectionPath)
                       .filter(file => file.endsWith('.pdf') || file.endsWith('.txt'));
