@@ -305,7 +305,6 @@ export class RAGService {
     const dirs = [
       config.rag.lanceDbPath,
       config.rag.lexicalIndexPath,
-      config.rag.vectorDbPath,
       config.rag.documentsPath,
       path.join(config.rag.documentsPath, 'temp'),
       config.rag.cachePath,

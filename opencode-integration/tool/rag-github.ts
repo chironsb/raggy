@@ -279,28 +279,32 @@ export default tool({
             try {
               const info = await makeApiRequest(`collections/${collName}`);
               const collInfo = info.data || info;
-              
-              // Get original document names from vector database
-              const vectorDbPath = path.join(getRaggyRoot(), 'data', 'vectors', `${collName}.json`);
-              let documents = [];
-              let documentNames = new Set<string>();
-              
-              if (fs.existsSync(vectorDbPath)) {
-                try {
-                  const vectorData = JSON.parse(fs.readFileSync(vectorDbPath, 'utf-8'));
-                  // Extract unique document names from metadata
-                  for (const chunk of vectorData) {
-                    if (chunk.metadata && (chunk.metadata.source || chunk.metadata.fileName)) {
-                      documentNames.add(chunk.metadata.source || chunk.metadata.fileName);
+
+              const root = getRaggyRoot();
+              const collectionPath = path.join(root, 'data', 'documents', collName);
+              let documents: string[] = [];
+
+              if (fs.existsSync(collectionPath)) {
+                documents = fs.readdirSync(collectionPath).filter(
+                  (file) => file.endsWith('.pdf') || file.endsWith('.txt')
+                );
+              }
+
+              // Pre-LanceDB JSON indexes only — ignore if you already migrated
+              if (documents.length === 0) {
+                const legacyJson = path.join(root, 'data', 'vectors', `${collName}.json`);
+                if (fs.existsSync(legacyJson)) {
+                  try {
+                    const vectorData = JSON.parse(fs.readFileSync(legacyJson, 'utf-8'));
+                    const names = new Set<string>();
+                    for (const chunk of vectorData) {
+                      if (chunk.metadata?.source || chunk.metadata?.fileName) {
+                        names.add(chunk.metadata.source || chunk.metadata.fileName);
+                      }
                     }
-                  }
-                  documents = Array.from(documentNames);
-                } catch (err) {
-                  // Fallback to filesystem listing
-                  const collectionPath = path.join(getRaggyRoot(), 'data', 'documents', collName);
-                  if (fs.existsSync(collectionPath)) {
-                    documents = fs.readdirSync(collectionPath)
-                      .filter(file => file.endsWith('.pdf') || file.endsWith('.txt'));
+                    documents = Array.from(names);
+                  } catch {
+                    /* ignore corrupt legacy file */
                   }
                 }
               }

@@ -1,7 +1,7 @@
 {
   "name": "raggy",
   "version": "1.0.0",
-  "description": "Local RAG system for OpenCode - completely free and offline",
+  "description": "Local document retrieval (LanceDB + hybrid search) for OpenCode and HTTP API",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -11,7 +11,7 @@
     "test:watch": "bunx jest --config jest.config.cjs --watch",
     "lint": "bunx eslint src/**/*.ts",
     "clean": "rm -rf dist data logs",
-    "setup": "bun install && mkdir -p data/{vectors,documents,lancedb,lexical,cache} logs",
+    "setup": "bun install && mkdir -p data/{documents,lancedb,lexical,cache} logs",
     "setup:full": "bun examples/setup.js"
   },
   "dependencies": {

@@ -7,8 +7,7 @@ This folder contains files for integrating Raggy with [OpenCode](https://opencod
 ```
 opencode-integration/
 ├── tool/
-│   ├── rag.ts              # Local version (copy to ~/.config/opencode/tool/)
-│   └── rag-github.ts       # GitHub version (generic paths, ready for distribution)
+│   └── rag-github.ts       # Source for ~/.config/opencode/tool/raggy.ts (via setup-opencode.sh)
 └── agent/
     └── RAG.md              # RAG agent configuration
 ```
@@ -96,7 +95,7 @@ RAG_MAX_RESULTS=5               # Max results per query
 
 **Tool not found:**
 - Make sure `raggy.ts` is in `~/.config/opencode/tool/` and `RAG.md` has `tools: raggy: true`
-- Set **`RAGGY_PATH`** to your Raggy repo (the tool spawns `bun run dev` there)
+- Run `./scripts/setup-opencode.sh` from the Raggy repo so **`~/.config/opencode/raggy-root.txt`** exists (or set **`RAGGY_PATH`** so the tool can spawn `bun run dev`)
 - Restart OpenCode
 
 **Server won't start:**

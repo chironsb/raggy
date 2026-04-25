@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Example: Query Raggy for document Q&A
+ * Example: Query Raggy (retrieval only — returns context + sources for your LLM).
  *
  * Usage:
- *   node examples/query.js "What is machine learning?" [collection-name]
+ *   node examples/query.js "Your question?" [collection-name]
+ *   node examples/query.js --interactive [collection]
  */
 
 const axios = require('axios');
@@ -13,52 +14,64 @@ const readline = require('readline');
 const RAGGY_URL = process.env.RAGGY_URL || 'http://localhost:3001';
 
 async function queryDocuments(question, collection = 'default') {
-  console.log(`🤔 Asking: "${question}"`);
+  console.log(`🤔 Question: "${question}"`);
   console.log(`📚 Collection: ${collection}`);
-  console.log('⏳ Searching documents...\n');
+  console.log('⏳ Retrieving chunks...\n');
 
   try {
-    const response = await axios.post(`${RAGGY_URL}/api/query`, {
-      question,
-      collection,
-      limit: 5
-    }, {
-      timeout: 60000, // 1 minute timeout
-    });
+    const response = await axios.post(
+      `${RAGGY_URL}/api/query`,
+      {
+        question,
+        collection,
+        limit: 5
+      },
+      {
+        timeout: 120000
+      }
+    );
 
-    const { answer, sources, processingTime } = response.data;
+    const body = response.data;
+    if (!body.success || !body.data) {
+      console.error('❌ Query failed:', body.error || 'Unknown error');
+      process.exit(1);
+    }
 
-    console.log('💡 Answer:');
+    const { context, sources, processingTime } = body.data;
+
+    console.log('📎 Context (feed this to an LLM or read directly):');
     console.log('─'.repeat(50));
-    console.log(answer);
+    console.log(context);
     console.log('─'.repeat(50));
 
     if (sources && sources.length > 0) {
       console.log(`\n📄 Sources (${sources.length}):`);
       sources.forEach((source, i) => {
-        console.log(`${i + 1}. Page ${source.page} (similarity: ${(source.score * 100).toFixed(1)}%)`);
-        console.log(`   "${source.content.substring(0, 100)}..."`);
+        const page = source.metadata?.page ?? '?';
+        const scorePct = (source.score * 100).toFixed(1);
+        const preview = (source.content || '').substring(0, 120).replace(/\s+/g, ' ');
+        console.log(`${i + 1}. ${source.metadata?.source || 'unknown'} · page ${page} · score ${scorePct}%`);
+        console.log(`   "${preview}..."`);
       });
     }
 
     console.log(`\n⚡ Processing time: ${processingTime}ms`);
-
   } catch (error) {
-    console.error('❌ Query failed:', error.response?.data?.error || error.message);
+    const msg = error.response?.data?.error || error.message;
+    console.error('❌ Query failed:', msg);
     process.exit(1);
   }
 }
 
-// Interactive mode
 async function interactiveMode(collection = 'default') {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
 
-  console.log('🤖 Raggy Interactive Q&A');
+  console.log('🤖 Raggy retrieval (interactive)');
   console.log(`📚 Collection: ${collection}`);
-  console.log('Type your questions (or "exit" to quit):\n');
+  console.log('Type questions (or "exit" to quit):\n');
 
   const askQuestion = () => {
     rl.question('❓ Question: ', async (question) => {
@@ -80,24 +93,18 @@ async function interactiveMode(collection = 'default') {
   askQuestion();
 }
 
-// CLI interface
 const args = process.argv.slice(2);
 if (args.length === 0) {
   console.log('Usage:');
   console.log('  node examples/query.js "your question here" [collection]');
   console.log('  node examples/query.js --interactive [collection]');
   console.log('');
-  console.log('Examples:');
-  console.log('  node examples/query.js "What is machine learning?"');
-  console.log('  node examples/query.js --interactive tech-books');
+  console.log('Raggy returns retrieved context, not a generated answer.');
   process.exit(1);
 }
 
 if (args[0] === '--interactive') {
-  const collection = args[1] || 'default';
-  interactiveMode(collection);
+  interactiveMode(args[1] || 'default');
 } else {
-  const question = args[0];
-  const collection = args[1] || 'default';
-  queryDocuments(question, collection);
+  queryDocuments(args[0], args[1] || 'default');
 }

@@ -1,58 +1,35 @@
 ---
-description: Local RAG system for OpenCode integration - document search and knowledge retrieval
-mode: tool
+description: Alternate OpenCode agent sketch — prefer opencode-integration/agent/RAG.md for the real RAG agent
+mode: primary
 tools:
-  rag: true
+  raggy: true
 ---
 
-# Raggy - Local RAG Assistant for OpenCode
+# Raggy (reference)
 
-You are Raggy, a local Retrieval-Augmented Generation (RAG) system integrated with OpenCode. You help developers search through their documents and retrieve knowledge directly in their coding workflow.
+This file is a **short reference** for what Raggy does. The maintained agent instructions live in **`opencode-integration/agent/RAG.md`** (installed to `~/.config/opencode/agent/RAG.md` by `scripts/setup-opencode.sh`).
 
-## Your Capabilities
+## Role
 
-- **Document Upload**: Process PDFs and text documents locally
-- **Intelligent Search**: Find relevant information using local embeddings
-- **Knowledge Retrieval**: Answer questions based on document content
-- **OpenCode Integration**: Seamlessly work with coding tools and queries
-- **Multilingual Support**: Handle documents in 50+ languages
-- **Offline Operation**: Everything runs locally, no internet required
+- **Raggy** = local **retrieval**: PDF/TXT → chunks → embeddings (Xenova) → **LanceDB** + optional **MiniSearch** hybrid (**RRF**).
+- The **chat model** answers; Raggy returns **`context`** + **`sources`**, not the final prose reply.
 
-## How You Work
+## OpenCode tool
 
-1. **Document Ingestion**: Users upload documents via REST API or OpenCode tools
-2. **Text Processing**: Extract and chunk text content
-3. **Embedding Generation**: Create vector embeddings locally using Transformers
-4. **Vector Storage**: Store embeddings in custom JSON-based local storage
-5. **Query Processing**: Search relevant chunks for user questions
-6. **Answer Generation**: Provide accurate responses with source citations
+Use the **`raggy`** tool (`raggy status`, `raggy upload`, `raggy query`, `raggy list`, `raggy stop`).
 
-## Technical Details
+## Stack (current)
 
-- **Embeddings**: Xenova Transformers (paraphrase-multilingual-MiniLM-L12-v2 for 50+ languages)
-- **Vector Database**: Custom JSON-based local storage
-- **PDF Processing**: pdfjs-dist for client-side text extraction
-- **Chunking**: Intelligent text splitting with overlap
-- **Storage**: JSON file-based local persistence
-- **Integration**: OpenCode tool API with auto-start/stop server management
+| Piece | Notes |
+|-------|--------|
+| Embeddings | `@xenova/transformers` (model from `.env`) |
+| Vectors | LanceDB (`data/lancedb`) |
+| Keyword | MiniSearch indexes under `data/lexical` when hybrid is on |
+| API | `http://localhost:3001` — see README |
 
-## Response Format
+## Practices
 
-When answering queries:
+- Same **collection** name for upload and query.
+- After changing **EMBEDDING_MODEL**, re-upload documents.
 
-- Provide direct, relevant information from documents
-- Cite sources when possible
-- Be concise and helpful
-- Indicate if information is not found in documents
-- Suggest related queries if appropriate
-
-## Best Practices
-
-- Upload related documents together
-- Use specific queries for better results
-- Consider document quality and size
-- Keep embeddings updated for new documents
-- Use descriptive file names
-
-Remember: Raggy is completely local and private. All processing and data stays on your machine.
-
+Everything stays on your machine unless you configure otherwise.

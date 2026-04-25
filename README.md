@@ -23,6 +23,21 @@ bun run dev
 
 Server: `http://localhost:3001`. Needs [Bun](https://bun.sh) 1.1+.
 
+Optional first-time helper (install, `.env`, dirs, `tsc`): `bun run setup:full`.
+
+---
+
+## Examples (HTTP API)
+
+With the server running (`bun run dev`):
+
+```bash
+node examples/upload-pdf.js ./paper.pdf mycollection
+node examples/query.js "What does the paper say about X?" mycollection
+```
+
+Scripts expect **`{ success, data, timestamp }`** from the API (`data` holds upload stats or query `context` / `sources`). See `examples/` and `opencode-integration/tool/rag-github.ts` (source for the OpenCode tool).
+
 ---
 
 ## OpenCode (to match a working setup)
@@ -78,11 +93,14 @@ Change things like: how strictly to parse `raggy …` commands, whether to avoid
 
 ## API (optional)
 
+JSON responses use a common envelope: **`{ success, data?, error?, timestamp }`** (query results live under **`data`**).
+
 ```bash
 curl -s http://localhost:3001/api/status
-curl -X POST http://localhost:3001/api/query \
+curl -s -X POST http://localhost:3001/api/query \
   -H "Content-Type: application/json" \
   -d '{"question":"…","collection":"mycollection"}'
+# e.g. jq '.data.context' if you pipe through jq
 ```
 
 More detail: `opencode-integration/README.md`, knobs in `.env.example`.
@@ -91,7 +109,7 @@ More detail: `opencode-integration/README.md`, knobs in `.env.example`.
 
 ## Upgrade from old Raggy
 
-Older **`data/vectors/*.json`** indexes are **not** used anymore. Safe approach: delete or archive `./data`, then **upload documents again**.
+Older **`data/vectors/*.json`** indexes are **not** read by the current engine (LanceDB + optional lexical). Safe approach: delete or archive `./data`, then **upload documents again**. The OpenCode tool’s `raggy list` can still **name** files from a legacy JSON only if the `data/documents/<collection>/` folder is empty.
 
 ---
 
